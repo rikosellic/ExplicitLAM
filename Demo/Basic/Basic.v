@@ -1,0 +1,599 @@
+Require Import Coq.ZArith.ZArith.
+Require Import Coq.Bool.Bool.
+Require Import Coq.Lists.List.
+Require Import FV.Demo.Naming.
+Require Import FV.utils.
+Import ListNotations.
+
+Module DemoBasicFOL.
+Export Naming.
+
+Inductive term := 
+| var (v:V.t)
+| empty_set
+| singleton (x:term)
+| union (x y: term) 
+| intersection (x y:term).
+
+Inductive prop: Type :=
+| PEq (t1 t2: term): prop
+| PRel (t1 t2: term): prop
+| PFalse: prop
+| PTrue: prop
+| PNot(P: prop)
+| PAnd (P Q: prop): prop
+| POr(P Q: prop): prop
+| PImpl (P Q: prop): prop
+| PIff (P Q: prop): prop
+| PForall (x: V.t) (P: prop): prop
+| PExists (x: V.t)(P:prop): prop
+.
+
+Declare Scope Basic_scope.
+Bind Scope Basic_scope with term.
+Bind Scope Basic_scope with prop.
+Delimit Scope Basic_scope with b.
+
+Coercion var: V.t >-> term.
+
+Declare Custom Entry bset.
+
+Notation "[[ e ]]" := e (at level 2, e custom bset at level 99): Basic_scope.
+Notation "( x )" := x (in custom bset, x custom bset at level 99): Basic_scope.
+Notation "x" := x (in custom bset at level 0, x constr at level 0): Basic_scope.
+Notation "∅":= empty_set (in custom bset at level 5, no associativity): Basic_scope.
+Notation "{ x }":= (singleton x) (in custom bset at level 5, x at level 13, no associativity): Basic_scope.
+Notation "x ∩ y" := (intersection x y)(in custom bset at level 11, left associativity): Basic_scope.
+Notation "x ∪  y" := (union x y)(in custom bset at level 12, left associativity): Basic_scope.
+Notation "x = y" := (PEq x y) (in custom bset at level 20, no associativity): Basic_scope.
+Notation "x ∈ y" := (PRel x y) (in custom bset at level 20, no associativity): Basic_scope.
+Notation "¬ P" := (PNot P) (in custom bset at level 23, right associativity): Basic_scope.
+Notation "P1 /\ P2" := (PAnd P1 P2) (in custom bset at level 24, left associativity): Basic_scope.
+Notation "P1 \/ P2" := (POr P1 P2) (in custom bset at level 26, left associativity): Basic_scope.
+Notation "P1 -> P2" := (PImpl P1 P2) (in custom bset at level 27, right associativity): Basic_scope.
+Notation "P1 <-> P2" := (PIff P1 P2) (in custom bset at level 28, no associativity): Basic_scope.
+Notation "∃ x , P" := (PExists x P) (in custom bset at level 29,  right associativity): Basic_scope.
+Notation "∀ x , P" := (PForall x P) (in custom bset at level 29, right associativity): Basic_scope.
+Notation " 'var2tm' x":= (var x) (in custom bset at level 5, only parsing, x constr): Basic_scope.
+
+Open Scope Basic_scope.
+
+Definition var_occur (x: V.t) (y: V.t):nat:=
+  if V.eq_dec x y then (S O) else O.
+
+Definition str_occur:= var_occur.
+
+
+Fixpoint term_occur (x: V.t) (t: term): nat :=
+    match t with
+    | [[∅]] => O
+    | var x0 => if V.eq_dec x x0 then S O else O
+    | [[{x0}]] => term_occur x x0
+    | [[ x0 ∩ y0 ]]
+    | [[ x0 ∪ y0 ]] => term_occur x x0 + term_occur x y0
+    end.
+
+Fixpoint free_occur (x: V.t) (d: prop): nat :=
+    match d with
+    | [[ t1 = t2]]   => (term_occur x t1) + (term_occur x t2)
+    | [[ t1 ∈ t2]]   => (term_occur x t1) + (term_occur x t2)
+    | PFalse  
+    | PTrue        => O
+    | [[ ¬ P ]] => free_occur x P
+    | [[ P1 /\ P2 ]]
+    | [[ P1 \/ P2 ]]
+    | [[ P1 -> P2 ]]
+    | [[ P1 <-> P2]]  => (free_occur x P1) + (free_occur x P2)
+    | [[ ∀x',P]] 
+    | [[ ∃x',P]] => if V.eq_dec x x'
+                      then O
+                      else free_occur x P
+    end.
+    
+Fixpoint tm_var (t:term):=
+  match t with
+  | empty_set => nil
+  | var x => [x]
+  | singleton x => tm_var x
+  | intersection x y
+  | union x y => tm_var x ++ tm_var y
+end.
+
+Fixpoint prop_var(d:prop):=
+  match d with
+  | PEq t1 t2
+  | PRel t1 t2 => tm_var t1 ++ tm_var t2
+  | PTrue
+  | PFalse => nil
+  | PNot P => prop_var P
+  | PAnd P1 P2
+  | POr P1 P2
+  | PImpl P1 P2
+  | PIff P1 P2 => prop_var P1 ++ prop_var P2
+  | PForall x P
+  | PExists x P => x::(prop_var P)
+  end.
+
+Definition subst_task: Type := list (V.t * term).
+
+Fixpoint task_occur (x: V.t) (st: subst_task): nat :=
+    match st with
+    | nil => O
+    | cons (x', t') st' => var_occur x x' + term_occur x t' + task_occur x st'
+    end.
+    
+Fixpoint task_term_occur(x:V.t)(st:subst_task):nat:=
+  match st with
+  | nil => O
+  | cons (x', t') st' => term_occur x t' + task_term_occur x st'
+  end.
+
+Definition task_var (st:subst_task):=
+  flat_map (fun p => (fst p)::tm_var (snd p)) st.
+
+Fixpoint var_sub (x: V.t) (st: subst_task): term :=
+  match st with
+  | nil => x
+  | cons (x', t') st' => if V.eq_dec x x' then t' else var_sub x st'
+  end.
+
+Fixpoint term_sub (st: subst_task) (t: term) :=
+  match t with
+  | [[∅]]=> [[∅]]
+  | var x => var_sub x st
+  | [[ {x} ]]=> singleton (term_sub st x)
+  | [[ x ∪ y]] => union (term_sub st x) (term_sub st y)
+  | [[ x ∩ y]] => intersection (term_sub st x) (term_sub st y)
+  end.
+
+Definition reduce (x:V.t)(st:subst_task):=
+  filter (fun p => if V.eq_dec x (fst p) then false else true) st.
+  
+Fixpoint list_reduce (xs:list V.t)(st:subst_task): subst_task:=
+  match xs with
+  | nil => st
+  | x::xs0 => reduce x (list_reduce xs0 st)
+end.
+
+Fixpoint prop_sub (st: subst_task) (d: prop): prop :=
+    match d with
+    | [[ t1 = t2]]  => PEq (term_sub st t1) (term_sub st t2)
+    | [[ t1 ∈ t2]]   => PRel (term_sub st t1) (term_sub st t2)
+    | PTrue      => PTrue
+    | PFalse      => PFalse
+    |  [[ ¬ P ]]  => PNot (prop_sub st P)
+    |  [[ P1 /\ P2 ]]=> PAnd (prop_sub st P1) (prop_sub st P2)
+    | [[ P1 \/ P2 ]] => POr (prop_sub st P1) (prop_sub st P2)
+    | [[ P1 -> P2 ]] => PImpl (prop_sub st P1) (prop_sub st P2)
+    | [[ P1 <-> P2]] => PIff (prop_sub st P1) (prop_sub st P2)
+    | [[ ∀x,P]]  => let st':= reduce x st in
+                    match task_term_occur x st' with
+                     | O => PForall x (prop_sub st' P)
+                     | _ => let x' := V.list_new_name (prop_var d ++ task_var st') in
+                                PForall x' (prop_sub (cons (x, var x') st') P)
+                     end
+    | [[ ∃x,P]]  => let st':= reduce x st in
+                    match task_term_occur x st' with
+                     | O => PExists x (prop_sub st' P)
+                     | _ => let x' := V.list_new_name (prop_var d ++ task_var st') in
+                                PExists x' (prop_sub (cons (x, var x') st') P)
+                     end
+    end.
+
+Declare Scope basic_subst_scope.
+Delimit Scope basic_subst_scope with bs.
+
+Notation "x |-> t" := (x, t) (in custom bset at level 17, no associativity): basic_subst_scope.
+Notation "P [ xt ]" :=
+  (prop_sub ( cons xt%bs nil ) P%b ) (in custom bset at level 20, no associativity): Basic_scope .
+Notation "P [ xt1 ; xt2 ; .. ; xtn ]" :=
+  (prop_sub ( cons xt1%bs  (cons xt2%bs .. (cons xtn%bs nil) .. ) ) P%b) (in custom bset at level 20,  no associativity):Basic_scope.
+
+(* ***************************************************************** *)
+(*                                                                   *)
+(*                                                                   *)
+(*  Alpha equivalence                                                *)
+(*                                                                   *)
+(*                                                                   *)
+(* ***************************************************************** *)
+
+Definition binder_pair:Type:= V.t * V.t * bool.
+
+Definition binder_list: Type:= list binder_pair.
+
+Definition binder_update (x:V.t)(y:V.t)(bd:binder_pair):binder_pair:=
+  let '(x0,y0,b):= bd in
+  if zerop (str_occur x x0 + str_occur y y0) then bd else (x0,y0,false).
+
+Definition update (x y: V.t)(st:binder_list):=
+  map (fun bd => binder_update x y bd) st.
+  
+Definition binder_l (st:binder_list):list V.t:=
+  map (fun x => fst (fst x)) st.
+
+Definition binder_r (st:binder_list): list V.t:=
+  map (fun x => snd (fst x)) st.
+
+Inductive term_alpha_eq: binder_list -> term -> term -> Prop:=
+ | empty_aeq: forall bd, term_alpha_eq bd empty_set empty_set
+ | var_aeq1: forall bd (s1 s2: V.t),
+                 In (s1,s2,true) bd ->
+                 term_alpha_eq bd (var s1) (var s2)
+ | var_aeq2: forall bd (s:V.t),
+                ~ In s (binder_l bd) ->
+                ~ In s (binder_r bd) ->
+                term_alpha_eq bd (var s) (var s)
+ | singleton_aeq: forall bd t1 t2,
+                term_alpha_eq bd t1 t2 ->
+                term_alpha_eq bd (singleton t1)(singleton t2)
+ | union_aeq: forall bd t1 t2 t3 t4,
+                term_alpha_eq bd t1 t3 ->
+                term_alpha_eq bd t2 t4 ->
+                term_alpha_eq bd (union t1 t2) (union t3 t4) 
+ | intersection_aeq: forall bd t1 t2 t3 t4,
+                term_alpha_eq bd t1 t3 ->
+                term_alpha_eq bd t2 t4 ->
+                term_alpha_eq bd (intersection t1 t2) (intersection t3 t4)
+. 
+
+
+Inductive alpha_eq: binder_list -> prop -> prop -> Prop:=
+ | PEq_aeq: forall bd t1 t2 t3 t4,
+                term_alpha_eq bd t1 t3 ->
+                term_alpha_eq bd t2 t4 ->
+                alpha_eq bd (PEq t1 t2) (PEq t3 t4) 
+ | PRel_aeq: forall bd t1 t2 t3 t4,
+                term_alpha_eq bd t1 t3 ->
+                term_alpha_eq bd t2 t4 ->
+                alpha_eq bd (PRel t1 t2) (PRel t3 t4) 
+ | PFalse_aeq: forall bd,
+                alpha_eq bd PFalse PFalse
+ | PTrue_aeq: forall bd,
+                alpha_eq bd PTrue PTrue
+ | PNot_aeq: forall bd P1 P2,
+                alpha_eq bd P1 P2 ->
+                alpha_eq bd (PNot P1) (PNot P2)
+ | PAnd_aeq: forall bd P1 P2 P3 P4,
+                alpha_eq bd P1 P3 ->
+                alpha_eq bd P2 P4 ->
+                alpha_eq bd (PAnd P1 P2) (PAnd P3 P4) 
+ | POr_aeq: forall bd P1 P2 P3 P4,
+                alpha_eq bd P1 P3 ->
+                alpha_eq bd P2 P4 ->
+                alpha_eq bd (POr P1 P2) (POr P3 P4) 
+ | PImpl_aeq: forall bd P1 P2 P3 P4,
+                alpha_eq bd P1 P3 ->
+                alpha_eq bd P2 P4 ->
+                alpha_eq bd (PImpl P1 P2) (PImpl P3 P4) 
+ | PIff_aeq: forall bd P1 P2 P3 P4,
+                alpha_eq bd P1 P3 ->
+                alpha_eq bd P2 P4 ->
+                alpha_eq bd (PIff P1 P2) (PIff P3 P4)
+ | PForall_aeq: forall (x x': V.t) bd P1 P2,
+               alpha_eq ((x,x',true)::(update x x' bd)) P1 P2 ->
+               alpha_eq bd (PForall x P1) (PForall x' P2)
+ | PExists_aeq: forall (x x': V.t) bd P1 P2,
+               alpha_eq ((x,x',true)::(update x x' bd)) P1 P2 ->
+               alpha_eq bd (PExists x P1) (PExists x' P2)
+.
+
+Definition aeq (P Q:prop):= alpha_eq nil P Q.
+
+Fixpoint in_binder_list(x y:V.t)(l:binder_list):bool:=
+  match l with
+  | nil => false
+  | (x0,y0,b)::ls => if V.eq_dec x x0 
+                                  then if V.eq_dec y y0
+                                      then if Sumbool.sumbool_of_bool b
+                                                  then true
+                                               else
+                                                  in_binder_list x y ls
+                                       else  in_binder_list x y ls else  in_binder_list x y ls 
+end.
+
+Fixpoint not_in_binder_list(x:V.t)(l:binder_list):bool:=
+  match l with
+  | nil => true
+  | (x0,y0,b)::ls => if V.eq_dec x x0 then false else
+                                      if V.eq_dec x y0 then false else not_in_binder_list x ls
+  end.
+
+Fixpoint term_alpha_eqb(l:binder_list)(t1 t2:term):bool:=
+  match t1,t2 with
+  | empty_set, empty_set => true
+  | var x, var y => if V.eq_dec x y then in_binder_list x y l || not_in_binder_list x l
+                              else in_binder_list x y l
+  | singleton x, singleton y => term_alpha_eqb l x y
+  | intersection x1 x2, intersection y1 y2
+  | union x1 x2, union y1 y2 => term_alpha_eqb l x1 y1 && term_alpha_eqb l x2 y2
+  | _ , _ => false
+  end.
+
+Fixpoint alpha_eqb(l:binder_list)(P Q:prop):bool:=
+  match P,Q with
+  | [[t1 = t2]], [[t3=t4]]
+  | [[t1 ∈ t2]], [[t3 ∈ t4]] => term_alpha_eqb l t1 t3 && term_alpha_eqb l t2 t4
+  | PTrue, PTrue
+  | PFalse, PFalse => true
+  | [[¬ P1]], [[¬ Q1]] => alpha_eqb l P1 Q1 
+  | [[P1 /\ P2]], [[Q1 /\ Q2]]
+  | [[P1 \/ P2]],  [[Q1 \/ Q2]]
+  | [[P1 -> P2]],  [[Q1 -> Q2]]
+  | [[P1 <-> P2]],  [[Q1 <-> Q2]] => alpha_eqb l P1 Q1 && alpha_eqb l P2 Q2 
+  | [[∀x, P1]], [[∀y, Q1]]
+  | [[∃x, P1]],  [[∃y, Q1]]=> alpha_eqb ((x,y,true)::(update x y l)) P1 Q1
+  | _, _ => false
+  end.
+  
+Definition aeqb(P Q:prop):bool:= alpha_eqb nil P Q.
+
+Lemma in_binder_list_correct: forall x y bd,
+ In (x,y,true) bd <->  in_binder_list x y bd = true.
+Proof.
+  split; intros.
+  + induction bd.
+      - inversion H.
+      - destruct a as  [ [x0 y0] b0].
+         destruct H.
+        * injection H as H; subst. simpl.
+           destruct (V.eq_dec x x); destruct (V.eq_dec y y); congruence.
+        * apply IHbd in H. simpl. 
+           destruct (V.eq_dec x x0); destruct (V.eq_dec y y0); try congruence.
+           now destruct (Sumbool.sumbool_of_bool b0).
+  + induction bd.
+      - discriminate H.
+      - destruct a as [ [x0 y0] b0]. simpl in H.
+         destruct (V.eq_dec x x0); destruct (V.eq_dec y y0);
+         destruct (Sumbool.sumbool_of_bool b0);
+         [subst; now left | right; tauto..].
+Qed.
+
+Lemma not_in_binder_list_correct: forall x bd,
+  ~ In x (binder_l bd) /\ ~ In x (binder_r bd) <-> not_in_binder_list x bd = true.
+Proof.
+  split; intros.
+  + destruct H. induction bd.
+      - reflexivity.
+      - destruct a as [ [x0 y0] b0]. des_notin H. des_notin H0. 
+         simpl. destruct (V.eq_dec x x0); destruct (V.eq_dec x y0); try congruence. now apply IHbd.
+  + induction bd.
+      - now constructor.
+      - destruct a as [ [x0 y0]  b0 ].
+        simpl in H. destruct (V.eq_dec x x0); destruct (V.eq_dec x y0); try discriminate.
+        split; apply not_in_cons; tauto.
+Qed.
+
+Lemma term_alpha_eq_term_alpha_eqb: forall t1 t2 bd,
+  term_alpha_eq bd t1 t2 <-> term_alpha_eqb bd t1 t2 = true.
+Proof.
+  split; intros.
+  + induction H.
+      - reflexivity.
+      - simpl. destruct (V.eq_dec s1 s2).
+        * subst. apply in_binder_list_correct in H.
+            rewrite H. apply orb_true_l.
+        * now apply in_binder_list_correct.
+      - simpl. destruct (V.eq_dec s s); try congruence.
+        assert (not_in_binder_list s bd = true) by now apply not_in_binder_list_correct.   
+        rewrite H1. apply orb_true_r.
+      - easy.
+      - simpl. rewrite IHterm_alpha_eq1. now rewrite IHterm_alpha_eq2.
+      - simpl. rewrite IHterm_alpha_eq1. now rewrite IHterm_alpha_eq2.
+   + revert t2 bd H. induction t1; intros; destruct t2; try discriminate H. 
+       - simpl in H. destruct (V.eq_dec v v0).
+         * subst. apply orb_prop in H. destruct H.
+            ++ constructor 2. now apply in_binder_list_correct.
+            ++ constructor 3; now apply not_in_binder_list_correct.
+         * constructor 2. now apply in_binder_list_correct.
+      - constructor.
+      - constructor. auto.
+      - simpl in H. apply andb_prop in H. destruct H.  constructor; auto.
+      - simpl in H. apply andb_prop in H. destruct H.  constructor; auto.
+Qed.
+      
+Lemma alpha_eq_alpha_eqb: forall P Q bd,
+  alpha_eq bd P Q <-> alpha_eqb bd P Q = true.
+Proof.
+  split; intros.
+  + induction H; simpl; try rewrite IHalpha_eq1; try rewrite IHalpha_eq2; try easy.
+      - simpl. apply term_alpha_eq_term_alpha_eqb in H.
+        apply term_alpha_eq_term_alpha_eqb in H0.
+        rewrite H. rewrite H0. easy.
+      - simpl. apply term_alpha_eq_term_alpha_eqb in H.
+        apply term_alpha_eq_term_alpha_eqb in H0.
+        rewrite H. rewrite H0. easy.
+  + revert Q bd H. induction P; intros; destruct Q; try discriminate H; simpl in H; 
+      try apply andb_prop in H; try constructor; auto; destruct H; auto; 
+      now apply term_alpha_eq_term_alpha_eqb.
+Qed.
+
+Corollary aeq_aeqb: forall P Q,
+  aeq P Q <-> aeqb P Q = true.
+Proof. intros. now apply alpha_eq_alpha_eqb. Qed.
+
+Definition subset_def (t1 t2: term): prop :=
+  [[ ( ∀ _z, _z ∈ _x -> _z ∈ _y )[ _x |-> t1 ; _y |-> t2 ] ]].
+
+Notation "t1 '⊆' t2" := (subset_def t1 t2) (in custom bset at level 20, no associativity):Basic_scope .
+
+Definition is_empty_def (t: term): prop :=
+  [[ (∀ _y, ¬ _y ∈ _x) [ _x |-> t ] ]].
+
+Notation " 'is_empty'  t1":= (is_empty_def t1) (in custom bset at level 20, t1 at level 15,no associativity):Basic_scope .
+
+(* t1 = {t2} *)
+Definition is_singleton_def (t1 t2: term): prop :=
+ [[ (∀ _z, _z ∈ _x <-> _z = _y) [ _x |-> t1 ; _y |-> t2 ] ]].
+ 
+Notation " 'is_singleton'  t1 t2 ":= (is_singleton_def t1 t2) (in custom bset at level 20, t1 at level 15, t1 at level 15, no associativity):Basic_scope .
+
+(* t1 = {t2, t3} *)
+Definition has_two_ele_def (t1 t2 t3: term): prop :=
+ [[ (∀ _u, _u ∈ _x <-> _u = _y \/ _u = _z) [ _x |-> t1 ; _y |-> t2 ; _z |-> t3 ] ]].
+
+Notation " 'has_two_ele'  t1 t2 t3":= (has_two_ele_def t1 t2 t3) (in custom bset at level 20, t1 at level 15, t2 at level 15, t3 at level 15, no associativity):Basic_scope .
+
+(* t1 = (t2, t3) := {{t2}, {t2, t3}} *)
+Definition is_pair_def (t1 t2 t3: term): prop :=
+  [[ (∃ _u, ∃ _v, is_singleton _u _y  /\  has_two_ele _v _y _z/\ has_two_ele _x _u _v) [ _x |-> t1 ; _y |-> t2 ; _z |-> t3 ] ]].
+  
+Notation " 'is_pair'  t1 t2 t3":= (is_pair_def t1 t2 t3) (in custom bset at level 20, t1 at level 15, t2 at level 15, t3 at level 15, no associativity):Basic_scope .
+ 
+(* t1 = t2 U t3 *)
+Definition is_union2_def (t1 t2 t3: term): prop :=
+[[ (∀ _u, _u  ∈ _x <-> _u ∈ _y \/ _u ∈ _z) [ _x |-> t1 ; _y |-> t2 ; _z |-> t3 ] ]].
+
+Notation " 'is_union2'  t1 t2 t3":= (is_union2_def t1 t2 t3) (in custom bset at level 20, t1 at level 15, t2 at level 15, t3 at level 15, no associativity):Basic_scope .
+
+Definition is_prod_def (t1 t2 t3: term): prop :=
+  [[(∀ _u, _u ∈ _x <-> ∃ _v, ∃ _w, _v ∈ _y /\ _w ∈ _z /\  is_pair _u _v _w )
+  [ _x |-> t1 ; _y |-> t2 ; _z |-> t3 ] ]].
+  
+Notation " 'is_prod'  t1 t2 t3":= (is_prod_def t1 t2 t3) (in custom bset at level 20, t1 at level 15, t2 at level 15, t3 at level 15, no associativity):Basic_scope .
+
+Definition is_rel_def (t1 t2 t3: term): prop :=
+ [[ (∀ _u, _u ∈ _x -> ∃ _v, ∃ _w, _v ∈ _y /\ _w ∈ _z /\  is_pair _u _v _w)
+  [ _x |-> t1 ; _y |-> t2 ; _z |-> t3 ] ]].
+  
+Notation " 'is_rel'  t1 t2 t3":= (is_rel_def t1 t2 t3) (in custom bset at level 20, t1 at level 15, t2 at level 15, t3 at level 15, no associativity):Basic_scope .
+
+(* (t1, t2) in t3 *)
+Definition in_rel_def (t1 t2 t3: term): prop :=
+  [[ (∃ _u,  is_pair _u _x _y  /\ _u ∈ _z) [ _x |-> t1 ; _y |-> t2 ; _z |-> t3 ] ]].
+  
+Notation " 'in_rel'  t1 t2 t3":= (in_rel_def t1 t2 t3) (in custom bset at level 20, t1 at level 15, t2 at level 15, t3 at level 15, no associativity):Basic_scope .
+
+Definition is_func_def (t: term): prop :=
+  [[ (∀ _y, ∀ _z, ∀ _u,
+    in_rel _y _z _x  -> in_rel _y _u _x  -> _z = _u) [_x|-> t] ]].
+   
+Notation " 'is_func'  t1":= (is_func_def t1) (in custom bset at level 20, t1 at level 15, no associativity):Basic_scope .
+   
+Definition is_inductive_def(t:term):=
+  [[ (∅ ∈ _x /\ ∀ _y, (_y ∈ _x -> _y ∪ {_y} ∈ _x) ) [ _x |-> t] ]].
+  
+Notation " 'is_inductive'  t1":= (is_inductive_def t1) (in custom bset at level 20, t1 at level 15, no associativity):Basic_scope .  
+
+Inductive provable:  prop -> Prop :=
+| PForall_elim: forall (vr: V.t) (t: term) P,
+    provable [[ (∀ vr, P) -> P [ vr |-> t] ]]
+| PExists_intros: forall (vr: V.t) (t: term) P,
+    provable [[ ( P [vr |-> t] ) -> (∃ vr, P) ]]
+| PForall_intros: forall (vr: V.t) P Q,
+    free_occur vr P = 0 ->
+    provable [[P -> Q]] ->
+    provable [[P-> (∀vr, Q)]]
+| PExists_elim: forall (vr: V.t) P Q,
+    free_occur vr Q = 0 ->
+    provable [[P -> Q]] ->
+    provable [[(∃vr,P) ->Q]]
+| PAnd_intros: forall P Q,
+    provable P ->
+    provable Q ->
+    provable [[P/\Q]]
+| PAnd_elim1: forall P Q,
+    provable [[ P /\ Q]] ->
+    provable P
+| PAnd_elim2: forall P Q,
+    provable [[ P /\ Q]] ->
+    provable Q
+| POr_intros1: forall P Q,
+    provable P ->
+    provable [[P\/Q]]
+| POr_intros2: forall P Q,
+    provable Q ->
+    provable [[P\/Q]]
+| POr_elim: forall P Q R,
+    provable [[P ->R]] ->
+    provable [[Q-> R]] ->
+    provable [[(P\/Q) -> R]]
+| PNot_EM: forall P Q,
+    provable [[P ->Q]] ->
+    provable [[¬P -> Q]] ->
+    provable Q
+| PNot_Contra: forall P Q,
+    provable [[¬P -> Q]] ->
+    provable [[¬P -> ¬ Q]] ->
+    provable P
+| Assu: forall P,
+    provable [[P->P]]
+| Modus_Ponens: forall P Q,
+    provable [[P->Q]] ->
+    provable P ->
+    provable Q
+| PImply_1: forall P Q,
+    provable [[P->(Q->P)]]
+| PImply_2: forall P Q R,
+    provable [[(P->Q->R) -> (P->Q) -> (P->R)]]
+| PIff_intros: forall P Q,
+    provable [[P -> Q]] ->
+    provable [[Q -> P]] ->
+    provable [[P <-> Q]]
+| PIff_elim1: forall P Q,
+    provable [[P <-> Q]] ->
+    provable [[P -> Q]]
+| PIff_elim2: forall P Q,
+    provable [[P <-> Q]]->
+    provable [[Q -> P]]
+| PEq_refl: forall (t: term),
+    provable [[t = t]]
+| PEq_sub: forall P (x: V.t) (t t': term),
+    provable [[t = t' -> P[x |-> t] -> P[x |-> t'] ]]
+| Empty:
+    provable [[is_empty ∅]]
+| Union:
+    provable [[∀ _x, ∀ _y, ∀ _z, _z ∈ _x ∪ _y <-> _z ∈ _x \/ _z ∈ _y ]]
+| Intersection_iff:
+    provable [[∀ _x, ∀ _y, ∀ _z, _z ∈ _x ∩ _y <-> _z ∈ _x /\ _z ∈ _y ]]
+
+| Singleton:
+    provable [[∀ _x, ∀ _z, _z ∈ {_x} <-> _z = _x]] 
+
+| Extensionality:
+    provable [[∀ _x, ∀ _y, (∀ _z, _z ∈ _x <-> _z ∈ _y) <-> _x = _y]]
+              
+| Pairing:
+    provable [[∀ _x, ∀ _y, ∃ _z, ∀ _u, _u ∈ _z <-> _u = _x \/ _u = _y]]
+    
+| Separation: forall  P,
+    free_occur _x P = O ->
+    free_occur _y P = O ->
+    provable [[∀ _x, ∃ _y, ∀ _z, _z ∈ _y <-> _z ∈ _x /\ P]]
+
+| Union_iff:
+    provable [[∀ _x, ∃ _y, ∀ _z, _z ∈ _y <-> ∃ _u, _z ∈ _u /\ _u ∈ _x]]
+                
+| PowerSet:
+    provable [[∀ _x, ∃ _y, ∀ _z, _z ∈ _y <->_z ⊆_x]]
+
+| Infinity:
+    provable [[∃ _x, is_inductive _x]]
+
+| Replacement: forall P,
+    free_occur _z P = O ->
+    free_occur _u P = O ->
+    provable [[ (∀ _x, ∀ _y, ∀ _z, P [ _y |-> (var2tm _z) ] -> P -> _y = _z) ->
+       (∀ _u, ∃ _z, ∀ _y, _y ∈ _z <-> ∃ _x, P /\ _x ∈ _u)]] 
+
+| Choice:
+    provable
+      [[∀ _x,
+              (∀ _y, _y ∈ _x -> ¬ is_empty _y) ->
+              ∃ _y, is_func _y /\
+                         ∀ _z, _z ∈ _x -> ∃ _u, in_rel _z _u _y /\ _u ∈ _z]]
+
+| Regularity:
+    provable
+              [[∀ _x,
+              ¬ is_empty _x ->
+                  ∃ _y, _y ∈ _x /\ ∀ _z, _z ∈ _x -> ¬ _z ∈ _y]]
+                  
+| Alpha_congruence: forall P Q,
+   aeq P Q ->
+   provable P -> 
+   provable Q
+.
+
+Close Scope Basic_scope.
+
+End DemoBasicFOL.

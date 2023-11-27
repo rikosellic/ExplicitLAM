@@ -1,0 +1,14 @@
+
+*.d
+*.aux
+*.cache
+.gitattributes
+.gitattributes
+CoqMakefile
+CoqMakefile.conf
+*.vo
+*.vos
+*.vok
+*.glob
+.vscode/settings.json
+.gitattributes

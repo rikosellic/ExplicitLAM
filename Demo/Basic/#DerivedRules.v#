@@ -1,0 +1,32 @@
+Require Import FV.Demo.Basic.Basic.
+Require Import FV.utils.
+Require Import FV.Demo.Basic.BasicLambda.
+Require Import Coq.Lists.List.
+Import ListNotations.
+
+
+
+Module DemoBasic.
+Include DemoBasicFOL.
+
+Open Scope Basic_scope.
+
+
+Lemma PImpl_PNot_PNot: forall P,
+  provable [[P -> ¬ ¬P ]].       
+
+Lemma aeq_rule: forall P Q,
+  aeq P Q ->
+  provable P <->  provable Q
+.
+Proof.
+  intros. revert Q H. induction P; intros . 
+  + admit.
+  + admit.
+  + admit.
+  + admit.
+  + Print provable. admit.
+  + admit.
+  + admit.
+  + admit.
+  + 
