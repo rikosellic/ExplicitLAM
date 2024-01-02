@@ -1,6 +1,6 @@
 This is the Coq development with the SETTA 2023 paper: *Formalization of Lambda Calculus With Explicit Names as a Nominal Reasoning Framework.*
 
-###Publication
+### Publication
 Wan, X., Cao, Q. (2024). Formalization of Lambda Calculus with Explicit Names as a Nominal Reasoning Framework. In: Hermanns, H., Sun, J., Bu, L. (eds) Dependable Software Engineering. Theories, Tools, and Applications. SETTA 2023. Lecture Notes in Computer Science, vol 14464. Springer, Singapore. https://doi.org/10.1007/978-981-99-8664-4_15
 
 For the paper, we refer readers to https://link.springer.com/chapter/10.1007/978-981-99-8664-4_15
